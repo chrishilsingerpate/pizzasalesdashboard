@@ -1,0 +1,116 @@
+Below is some of the initial work done in mySQL. Queries were conducted for preliminary analysis. More extensive analysis will follow in R. 
+See other files for information. 
+
+/* orders table is of most interest; want to make a column 
+that is both date and time */ 
+ALTER TABLE orders1 ADD date_time DATETIME; -- adding date_time column and specifying it's a DATETIME value
+SET SQL_SAFE_UPDATES = 0; -- was having an issue with the update; needed to turn off safe updates
+SET SQL_SAFE_UPDATES = 1; -- turning safety feature back on
+UPDATE orders1 SET date_time = CONCAT(date,' ',time); -- merged date and time with CONCAT
+SELECT * FROM orders1 LIMIT 10; -- viewed to make sure it was done correctly 
+
+SELECT COUNT(*) FROM orders1; 
+-- 21,350 orders over the course of a year 
+-- How many orders were placed by month?
+SELECT 
+	date_format(date, '%Y-%m') as month,
+    COUNT(order_id) as order_count
+FROM orders1
+GROUP BY month
+ORDER BY month;
+-- The most orders were placed in July; results written down but can be exported later 
+-- Now let's explore what times are busiest 
+-- We need to first establish a min and max for time so we know hours of operation
+SELECT max(time),min(time)
+FROM orders1;
+-- Based on min (9:52) and max (23:05), we can assume hours are from 10am to 11pm
+-- We are going to do a count with CASE WHEN statements to group orders into four general times
+SELECT
+    COUNT(order_id) as order_count,
+    CASE
+        WHEN extract(hour from time) between 10 and 13 THEN 'Lunch'
+        WHEN extract(hour from time) between 14 and 17 THEN 'Mid-Day'
+        WHEN extract(hour from time) between 18 and 20 THEN 'Dinner'
+        WHEN extract(hour from time) between 21 and 23 THEN 'Late-Night'
+        ELSE 'Misc'
+    END as 'Time of Day'
+FROM orders1
+GROUP BY 
+    CASE
+        WHEN extract(hour from time) between 10 and 13 THEN 'Lunch'
+        WHEN extract(hour from time) between 14 and 17 THEN 'Mid-Day'
+        WHEN extract(hour from time) between 18 and 20 THEN 'Dinner'
+        WHEN extract(hour from time) between 21 and 23 THEN 'Late-Night'
+        ELSE 'Misc'
+    END;
+-- Awesome, now we know what times of day are busiest: Lunch (6214), Mid-Day(7196), Dinner(6050), Late-Night(1889)
+-- All orders placed between 5pm and 5:59pm counted to Mid-Day; moving that time to dinner would certainly alter results
+-- We can get more specific and determine sales by hour (keep in mind hours are military time
+SELECT HOUR(orders1.time) as hour, SUM(orderdetails.quantity * pizzas.price) as total_sales
+FROM orderdetails
+LEFT JOIN orders1
+ON orderdetails.order_id = orders1.order_id
+LEFT JOIN pizzas
+ON orderdetails.pizza_id = pizzas.pizza_id
+GROUP BY hour
+ORDER BY hour;
+
+-- Let's see how many sales we do each day of the week
+SELECT DAYNAME(orders1.date) as day_of_week, SUM(orderdetails.quantity * pizzas.price) as total_sales
+FROM orderdetails
+LEFT JOIN orders1
+ON orderdetails.order_id = orders1.order_id
+LEFT JOIN pizzas
+ON orderdetails.pizza_id = pizzas.pizza_id
+GROUP BY DAYNAME(orders1.date)
+ORDER BY total_sales DESC;
+
+-- Now let's work towards determining total revenue from pizza sales
+SELECT 
+	orderdetails.pizza_id,
+    orderdetails.quantity,
+    pizzas.price,
+    (orderdetails.quantity * pizzas.price) as value
+FROM orderdetails
+LEFT JOIN pizzas
+	ON orderdetails.pizza_id = pizzas.pizza_id;
+-- We will need a subquery to total the value column
+SELECT SUM(value) as total
+FROM (SELECT 
+	orderdetails.pizza_id,
+    orderdetails.quantity,
+    pizzas.price,
+    (orderdetails.quantity * pizzas.price) as value
+FROM orderdetails
+LEFT JOIN pizzas
+	ON orderdetails.pizza_id = pizzas.pizza_id) as sub;
+
+-- That worked just as we intended. The pizza shop did $817,860.05 in revenue (from pizza sales). 
+-- What about individual orders? What's the average and median cost of orders?
+-- We are going to keep the same join we previously used to get the price. This time, we only care about the order_id and value.
+SELECT 
+    orderdetails.order_id, 
+    SUM((orderdetails.quantity * pizzas.price)) as order_value
+FROM orderdetails
+LEFT JOIN pizzas
+    ON orderdetails.pizza_id = pizzas.pizza_id
+GROUP BY orderdetails.order_id;
+-- After running that, it seems to have worked. The orders were grouped correctly. 
+-- Let's figure out the mean. 
+SELECT AVG(order_value) as avg_total
+FROM (SELECT 
+    orderdetails.order_id, 
+    SUM((orderdetails.quantity * pizzas.price)) as order_value
+FROM orderdetails
+LEFT JOIN pizzas
+    ON orderdetails.pizza_id = pizzas.pizza_id
+GROUP BY orderdetails.order_id) as sub;
+-- The average order total is $38.30
+-- Now that we've gained some insight into the orders, let's find out what items are most popular
+SELECT pizzas.pizza_type_id, SUM(orderdetails.quantity) as total_quantity
+FROM orderdetails
+LEFT JOIN pizzas
+ON orderdetails.pizza_id = pizzas.pizza_id
+GROUP BY pizzas.pizza_type_id
+ORDER BY total_quantity DESC;
+-- The classic deluxe, BBQ chicken, and Hawaiian are the three most popular pizza types
